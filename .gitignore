@@ -1,0 +1,18 @@
+# cache
+.DS_Store
+*~
+.cache
+
+# editor
+.idea
+.vscode
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+cscope.*
+
+# other
+xhttpd
+.o

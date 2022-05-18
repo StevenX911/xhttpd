@@ -2,7 +2,7 @@
 
 基于epoll实现的简易版http服务器
 
-> epoll 仅支持在linux内核的OS中
+> epoll 仅支持在linux内核的OS中使用
 
 1. 单文件
 2. 仅500行

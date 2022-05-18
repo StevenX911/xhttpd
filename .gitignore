@@ -15,4 +15,4 @@ cscope.*
 
 # other
 xhttpd
-.o
+*.o

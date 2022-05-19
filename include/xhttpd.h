@@ -9,6 +9,6 @@ void send_error(int cfd, int status, char *title, char *text);
 void send_head(int cfd, int no, char *desc, char *ctype, int len);
 void send_body(int cfd, const char *file);
 void send_dir(int cfd, const char *dirname);
-void http_request(int cfd, char *path;
+void http_request(int cfd, char *path);
 void do_read(int lfd, int epfd);
 void epoll_run(int port);

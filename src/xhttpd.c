@@ -16,7 +16,7 @@
 #define MAXSIZE 2048
 
 // 获取一行\r\n结尾的数据（此函数的目的是根据http协议内容特性而定）
-// http请求和响应中，每行的数据都以\r\n结尾
+// http请求和响应中，要求每行的数据都以\r\n结尾
 int get_line(int cfd, char *buf, int size)
 {
     int i = 0;
@@ -100,7 +100,7 @@ char *get_file_type(const char *file)
 }
 
 // encode
-void encode_str(char *to, int tosize, const char* from)
+void encode_str(char *to, int tosize, const char *from)
 {
     // todo
     strcpy(to, from);
@@ -220,25 +220,16 @@ void disconnect(int cfd, int epfd)
 void send_error(int cfd, int status, char *title, char *text)
 {
     char buf[4096] = {0};
-    sprintf(buf, "%s %d %s\r\n", "HTTP/1.1", status, title);
-    sprintf(buf + strlen(buf), "Content-Type: %s\r\n", "text/html");
-    sprintf(buf + strlen(buf), "Content-Length: %d\r\n", -1);
-    sprintf(buf + strlen(buf), "Connection: close\r\n");
-    sprintf(buf + strlen(buf), "\r\n");
-    send(cfd, buf, strlen(buf), 0);
-
-    memset(buf, 0, sizeof(buf));
-
-    sprintf(buf, "<html><head><title>%d %s</title></head><body>\n", status, title);
-    sprintf(buf + strlen(buf), "<center><h1>%d %s</h1></center><hr>\n", status, title);
+    sprintf(buf, "<html><head><title>%d %s</title></head><body>\r\n", status, title);
+    sprintf(buf + strlen(buf), "<center><h1>%d %s</h1></center><hr>\r\n", status, title);
     if (text != NULL)
     {
-        sprintf(buf + strlen(buf), "<center>%s</center>\n", text);
+        sprintf(buf + strlen(buf), "<center>%s</center>\r\n", text);
     }
-    sprintf(buf + strlen(buf), "<center>xhttpd/0.0.1</center>\n");
-    sprintf(buf + strlen(buf), "</body></html>\n");
+    sprintf(buf + strlen(buf), "<center>xhttpd/0.0.1</center>\r\n");
+    sprintf(buf + strlen(buf), "</body></html>\r\n");
+    printf("error len: %lu\n", strlen(buf)); // 计算长度
     send(cfd, buf, strlen(buf), 0);
-    return;
 }
 
 // 发送响应头
@@ -249,6 +240,7 @@ void send_head(int cfd, int no, char *desc, char *ctype, int len)
     sprintf(buf, "HTTP/1.1 %d %s\r\n", no, desc);
     sprintf(buf + strlen(buf), "Content-Type: %s\r\n", ctype);
     sprintf(buf + strlen(buf), "Content-Length: %d\r\n", len);
+    sprintf(buf + strlen(buf), "Connection: %s\r\n", "close");
     sprintf(buf + strlen(buf), "\r\n");
     send(cfd, buf, strlen(buf), 0);
 }
@@ -257,27 +249,24 @@ void send_head(int cfd, int no, char *desc, char *ctype, int len)
 void send_body(int cfd, const char *file)
 {
     int n = 0;
-    char buf[1024] = {0};
+    char buf[4096] = {0};
     int fd = open(file, O_RDONLY);
     if (fd == -1)
     {
-        // 404 note found
         perror("open error.");
-        send_error(cfd, 404, "Not Found", NULL);
         exit(1);
     }
 
     while ((n = read(fd, buf, sizeof(buf))) > 0)
     {
+        // TODO: 待优化，真实网络环境下，大文件传输容易丢包
         int ret = send(cfd, buf, n, 0);
-        if (ret == -1)
+        if (ret <= 0)
         {
-            if (errno == EAGAIN)
+            if (ret == -1 && (errno == EAGAIN || errno == EINTR))
             {
-                continue;
-            }
-            else if (errno == EINTR)
-            {
+                printf("-----------EAGAIN/INTER\n");
+                usleep(50 * 1000); /**发送区为满时候循环等待，直到可写为止*/
                 continue;
             }
             else
@@ -286,8 +275,12 @@ void send_body(int cfd, const char *file)
                 exit(1);
             }
         }
+        else
+        {
+           usleep(50 * 1000); 
+        }
     }
-
+    printf("-----------------BODY n:%d\n", n);
     close(fd);
 }
 
@@ -352,7 +345,7 @@ void send_dir(int cfd, const char *dirname)
         memset(buf, 0, sizeof(buf));
     }
 
-    sprintf(buf + strlen(buf), "</table></body></html>");
+    sprintf(buf + strlen(buf), "</table></body></html>\r\n");
     send(cfd, buf, strlen(buf), 0);
 }
 
@@ -361,9 +354,7 @@ void http_request(int cfd, char *path)
 {
     // 解码，防止乱码
     decode_str(path, path);
-
     char *file = path + 1; // 获取文件名
-
     // 如果没有指定访问的资源，显示当前目录的内容
     if (strcmp(path, "/") == 0)
     {
@@ -373,7 +364,8 @@ void http_request(int cfd, char *path)
     int ret = stat(file, &sbuf);
     if (ret != 0)
     {
-        printf("------------------is a error.\n");
+        printf("------------------404 Not Found.\n");
+        send_head(cfd, 404, "Not Found", get_file_type(".html"), 147);
         send_error(cfd, 404, "Not Found", NULL);
         return;
     }
@@ -381,7 +373,7 @@ void http_request(int cfd, char *path)
     if (S_ISDIR(sbuf.st_mode)) // 目录
     {
         printf("------------------is a dir.\n");
-        send_head(cfd, 200, "OK", get_file_type(".html"), -1);
+        send_head(cfd, 200, "OK", get_file_type(".html"), -1); // TODO: -1 导致连接不能关闭
         send_dir(cfd, file);
     }
     else if (S_ISREG(sbuf.st_mode)) // 普通文件
@@ -402,7 +394,7 @@ void do_read(int cfd, int epfd)
     int len = get_line(cfd, line, sizeof(line));
     if (len == 0)
     {
-        printf("client closed");
+        printf("client closed.\n");
         disconnect(cfd, epfd);
     }
     else
@@ -419,12 +411,15 @@ void do_read(int cfd, int epfd)
             {
                 break;
             }
-            // printf("----%s", buf);
         }
 
         if (strncasecmp(method, "GET", 3) == 0)
         {
             http_request(cfd, path); // 处理http请求
+        }
+        if (strncasecmp(method, "POST", 4) == 0)
+        {
+            // TODO
         }
     }
 }
@@ -444,22 +439,27 @@ void epoll_run(int port)
 
     // 创建监听lfd，并添加到epoll监听树
     int lfd = init_listen_fd(port, epfd);
-
     while (1)
     {
         // 监听结点对应的事件 <阻塞>
         int ret = epoll_wait(epfd, all_events, MAXSIZE, -1);
         if (ret == -1)
         {
-            perror("epoll_wait error.");
-            exit(1);
+            if (errno == EAGAIN || errno == EINTR)
+            {
+                continue;
+            }
+            else
+            {
+                perror("epoll_wait error.");
+                exit(1);
+            }
         }
 
         for (i = 0; i < ret; i++)
         {
             // 仅处理读事件， 其他事件默认不处理
             struct epoll_event *pev = &all_events[i];
-
             // 不是读事件,跳过
             if (!(pev->events & EPOLLIN))
             {
@@ -485,7 +485,6 @@ int main(int argc, char const *argv[])
         printf("./xhttpd port dir\n");
         exit(1);
     }
-
     // 获取端口
     int port = atoi(argv[1]);
     // 改变当前进程工作目录
